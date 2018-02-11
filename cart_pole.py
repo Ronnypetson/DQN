@@ -2,12 +2,16 @@ import tensorflow as tf
 import gym
 import numpy as np
 import os
+import random
 
 env_name = 'CartPole-v0'
 state_dim = 4
 ob_frames = 2
 num_keys = 2
 learning_rate = 0.01
+batch_size = 32
+replay_len = 1024
+oldest_mem = 0
 model_fn = 'checkpoint/'+env_name+'/'+env_name+'.ckpt'
 
 def beep():
@@ -20,6 +24,36 @@ def Or(f):
 	for a in f:
 		r = r or a
 	return r
+
+def get_argmaxes(a):
+	m = []
+	for i in range(batch_size):
+		b = a[2*i:2*i+num_keys]
+		m.append(np.random.choice(np.flatnonzero(b == b.max())))
+	return m
+
+def replace_mem(mem,new_):
+	global oldest_mem
+	mem[oldest_mem] = new_
+	oldest_mem = (oldest_mem+1)%replay_len
+
+def get_batch(m):
+	ob = []
+	act = []
+	r = []
+	new_ob = []
+	d = []
+	for i in range(batch_size):
+		reg = random.choice(m)
+		for j in range(num_keys):
+			ob.append(reg['obs'])
+			a = np.zeros(num_keys)
+			a[reg['act']] = 1.0
+			act.append(a)
+			r.append(reg['r'])
+			new_ob.append(reg['new_obs'])
+			d.append(reg['d'])
+	return ob, act, r, new_ob, d
 
 def step(env,a):
 	obs = np.zeros((ob_frames,state_dim))
@@ -52,6 +86,12 @@ gamma = 0.99
 e = 0.01
 alpha = 0.95
 
+single_action = np.identity(num_keys).tolist()
+batch_action = batch_size*single_action
+empty_obs = np.zeros((ob_frames,state_dim))
+default_action = 1
+replay_memory = replay_len*[{'obs':empty_obs,'act':default_action,'r':0.0,'new_obs':empty_obs,'d':False}]
+
 with tf.Session() as sess:
 	saver = tf.train.Saver()
 	if os.path.isfile(model_fn+'.meta'):
@@ -60,27 +100,37 @@ with tf.Session() as sess:
 		sess.run(tf.global_variables_initializer())
 	for t in range(500000):
 		env.reset()
-		obs,r,d = step(env,1)
+		obs,r,d = step(env,default_action)
 		for i in range(2000000):
-			allQ = sess.run(fc2,feed_dict={X:num_keys*[obs],act:np.identity(num_keys)})
+			allQ = sess.run(fc2,feed_dict={X:num_keys*[obs],act:single_action})
 			allQ = np.transpose(allQ)[0]
 			a = np.random.choice(np.flatnonzero(allQ == allQ.max()))
-			#a = np.argmax(allQ)
 			if np.random.rand(1) < e:
 				a = env.action_space.sample()
 			new_obs,r,d = step(env,a)
-			#if d and i < 200:
-			#	r = 400.0
-			#	beep()
-			maxQ = sess.run(fc2,feed_dict={X:num_keys*[new_obs],act:np.identity(num_keys)})
+			new_mem = {'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
+			replace_mem(replay_memory, new_mem)
+			#
+			b_ob, b_act, b_r, b_new_ob, b_d = get_batch(replay_memory)
+			maxQ = sess.run(fc2,feed_dict={X:b_ob,act:batch_action})
 			maxQ = np.transpose(maxQ)[0]
-			maxQ = np.max(maxQ)
-			y = (1.0-alpha)*allQ[a] + alpha*(r+gamma*maxQ)
-			print(a,e,y,r,i)
-			if d:
-				y = r
-			e = 0.2/(1+np.exp(y/100))
-			sess.run(train,feed_dict={X:[obs],act:[np.identity(num_keys)[a]],Y:[[y]]})
+			#
+			argmaxQ = get_argmaxes(maxQ)
+			b_d = [b_d[j] for j in argmaxQ]
+			b_r = [b_r[j] for j in argmaxQ]
+			y = np.zeros(batch_size)
+			#y = np.array([b_r[k] for k in argmaxQ])+gamma*np.array([maxQ[i] for i in argmaxQ]) #
+			for j in range(batch_size):
+				if b_d[j]:
+					y[j] = b_r[j]
+				else:
+					y[j] = b_r[j] + gamma*maxQ[argmaxQ[j]]
+			s_y = np.sum(y)/batch_size
+			e = 0.2/(1+np.exp(s_y/100))
+			print(e,s_y)
+			x_ = [b_ob[i] for i in argmaxQ]
+			ac_ = [b_act[i] for i in argmaxQ]
+			sess.run(train,feed_dict={X:x_,act:ac_,Y:np.expand_dims(y,axis=1)})
 			obs = new_obs
 			if d:
 				break
