@@ -2,16 +2,19 @@ import tensorflow as tf
 import gym
 import numpy as np
 import os
+import random
 from collections import deque
 
-env_name = 'BipedalWalker-v2'
-state_dim = 24
+env_name = 'Pong-ram-v0'
+state_dim = 128
 ob_frames = 3
-num_keys = 4
+num_keys = 5
 learning_rate = 0.001
 replay_len = 10000
 oldest_mem = 0
-default_action = np.zeros((num_keys))
+batch_size = 50
+all_actions = np.identity(num_keys)
+default_action = all_actions[0]
 empty_obs = np.zeros((ob_frames,state_dim))
 model_fn = 'checkpoint/'+env_name+'/'+env_name+'.ckpt'
 mem = replay_len*[{'q_sa':0.0,'obs':empty_obs,'act':default_action,'r':0.0,'new_obs':empty_obs,'d':False}]
@@ -84,8 +87,7 @@ train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
 env = gym.make(env_name)
 gamma = 0.99
-e = 0.01
-alpha = 0.95
+e = 0.1
 
 with tf.Session() as sess:
 	saver = tf.train.Saver()
@@ -101,29 +103,28 @@ with tf.Session() as sess:
 		obs = ob_frames*obs.tolist()
 		d = False
 		s_r = 0.0
-    while not d:
-			Q = sess.run()
-		for i in range(2000000):
-			allQ = sess.run(fc3,feed_dict={X:2*num_keys*[obs],act:action})
-			allQ = np.transpose(allQ)[0]
-			a_ = np.random.choice(np.flatnonzero(allQ == allQ.max()))
-			#a = np.argmax(allQ)
-			a = action[a_]
-			if np.random.rand(1) < e:
-				a = env.action_space.sample()
-			new_obs,r,d = step(env,a)
-			maxQ = sess.run(fc2,feed_dict={X:2*num_keys*[new_obs],act:action})
-			maxQ = np.transpose(maxQ)[0]
-			maxQ = np.max(maxQ)
-			y = (1.0-alpha)*allQ[a_] + alpha*(r+gamma*maxQ)
-			print(a,e,y,r)
-			if d:
-				y = r
-			e = 0.1/(1+np.exp(y/100))
-			sess.run(train,feed_dict={X:[obs],act:[a],Y:[[y]]})
+		while not d:
+			Q = sess.run(fc3,feed_dict={X:num_keys*[obs],act:all_actions})
+			Q = np.transpose(Q)[0]
+			a = np.argmax(Q)
+			print(a)
+			new_obs,r,d = step(env,a,t%100==99)
+			new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
+			s_r += r
+			replace_mem(new_mem)
 			obs = new_obs
-			if d:
-				break
-		if t%100 == 99:
+		scores.append(s_r)
+		scores_.append(s_r)
+		# Replay
+		q_sa, b_ob, b_act, b_r, b_new_ob, b_d = get_batch()
+		Q = sess.run(fc3,feed_dict={X:b_new_ob,act:[all_actions[a] for a in b_act]})
+		y = np.zeros(batch_size)
+		for j in range(batch_size):
+			if b_d[j]:
+				y[j] = b_r[j]
+			else:
+				y[j] = b_r[j]+gamma*Q[j]
+		sess.run(train,feed_dict={X:b_ob,Y:y})
+		if t%500 == 499:
 			saver.save(sess,model_fn)
 
