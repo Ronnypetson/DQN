@@ -107,7 +107,7 @@ with tf.Session() as sess:
 		while not d:
 			Q = sess.run(fc3,feed_dict={X:num_keys*[obs],act:all_actions})
 			Q = np.transpose(Q)[0]
-			a = np.argmax(Q)
+			a = env.action_space.sample() if random.uniform(0,1) < e else np.argmax(Q)
 			print(a)
 			new_obs,r,d = step(env,a,t%100==99)
 			new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
