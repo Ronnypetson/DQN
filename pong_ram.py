@@ -126,7 +126,7 @@ with tf.Session() as sess:
 				y[j] = b_r[j]
 			else:
 				y[j] = b_r[j]+gamma*np.max(Q[j*(num_keys):(j+1)*num_keys])
-		y = np.transpose(y)
+		y = np.reshape(y,(batch_size,1))
 		sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
 		if t%500 == 499:
 			saver.save(sess,model_fn)
