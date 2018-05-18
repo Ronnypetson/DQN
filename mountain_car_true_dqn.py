@@ -5,19 +5,19 @@ import os
 import random
 from collections import deque
 
-env_name = 'Pong-ram-v0'
-state_dim = 128
+env_name = 'MountainCar-v0'
+state_dim = 2
 ob_frames = 3
-num_keys = 6
+num_keys = 3
 learning_rate = 0.001
 replay_len = 20000
 oldest_mem = 0
 batch_size = 50
 all_actions = np.identity(num_keys)
-default_action = all_actions[0]
+default_action = 1
 rep_all_actions = np.tile(all_actions,(batch_size,1))
 empty_obs = np.zeros((ob_frames,state_dim))
-model_fn = 'checkpoint/'+env_name+'/'+env_name+'.ckpt'
+model_fn = 'checkpoint/'+env_name+'_true_dqn'+'/'+env_name+'.ckpt'
 mem = replay_len*[{'q_sa':0.0,'obs':empty_obs,'act':default_action,'r':0.0,'new_obs':empty_obs,'d':False}]
 
 def Or(f):
@@ -72,19 +72,28 @@ def step(env,a,render=False):
 	d = Or(d)
 	return obs,r,d
 
+# Main network
 X = tf.placeholder(tf.float32,[None,ob_frames,state_dim])
 act = tf.placeholder(tf.float32,[None,num_keys])
 Y = tf.placeholder(tf.float32,[None,1])
-
 X_ = tf.contrib.layers.flatten(X)
 act_ = tf.contrib.layers.flatten(act)
-fc1 = tf.concat([X_,act_],1)
-fc1 = tf.layers.dense(fc1,100,activation=tf.nn.relu)
+x_act = tf.concat([X_,act_],1)
+fc1 = tf.layers.dense(x_act,100,activation=tf.nn.relu)
 fc2 = tf.layers.dense(fc1,20,activation=tf.nn.relu)
 fc3 = tf.layers.dense(fc2,1)
 
 loss = tf.losses.mean_squared_error(fc3,Y)
 train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
+
+# Auxiliary network
+#fc1_ = tf.layers.dense(x_act,100,activation=tf.nn.relu)
+#fc2_ = tf.layers.dense(fc1_,20,activation=tf.nn.relu)
+#fc3_ = tf.layers.dense(fc2_,1)
+
+# Copy ops
+#vars_cp = tf.trainable_variables()
+#copy_ops = [vars_cp[ix+len(vars_cp)//2].assign(var.value()) for ix, var in enumerate(vars_cp[0:len(vars_cp)//2])]
 
 env = gym.make(env_name)
 gamma = 0.99
@@ -126,6 +135,8 @@ with tf.Session() as sess:
 					y[j] = b_r[j]+gamma*np.max(Q[j*(num_keys):(j+1)*num_keys])
 			y = np.reshape(y,(batch_size,1))
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
+			#if t%20 == 19:
+			#	map(lambda x: sess.run(x), copy_ops)
 		scores.append(s_r)
 		scores_.append(s_r)
 		if t%500 == 499:
