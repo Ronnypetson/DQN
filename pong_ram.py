@@ -10,9 +10,9 @@ state_dim = 128
 ob_frames = 3
 num_keys = 6
 learning_rate = 0.001
-replay_len = 20000
+replay_len = 2000
 oldest_mem = 0
-batch_size = 50
+batch_size = 32
 all_actions = np.identity(num_keys)
 default_action = all_actions[0]
 rep_all_actions = np.tile(all_actions,(batch_size,1))
@@ -108,7 +108,7 @@ with tf.Session() as sess:
 			Q = sess.run(fc3,feed_dict={X:num_keys*[obs],act:all_actions})
 			Q = np.transpose(Q)[0]
 			a = env.action_space.sample() if random.uniform(0,1) < e else np.argmax(Q)
-			print(a)
+			#print(a)
 			new_obs,r,d = step(env,a,t%100==99)
 			new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
 			s_r += r
@@ -127,6 +127,7 @@ with tf.Session() as sess:
 			y = np.reshape(y,(batch_size,1))
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
 		scores.append(s_r)
+		print(np.mean(scores))
 		scores_.append(s_r)
 		if t%500 == 499:
 			saver.save(sess,model_fn)

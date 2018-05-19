@@ -12,7 +12,7 @@ ob_frames = 3
 num_keys = 1
 learning_rate = 0.001
 batch_size = 32
-replay_len = 100000
+replay_len = 10000
 oldest_mem = 0
 default_action = 1
 empty_obs = np.zeros((ob_frames,state_dim))
@@ -81,11 +81,12 @@ def set_rep_mem(env):
 X = tf.placeholder(tf.float32,[None,ob_frames,state_dim])
 X_ = tf.contrib.layers.flatten(X)
 a1 = tf.layers.dense(X_,50,activation=tf.nn.relu)
-a2 = tf.layers.dense(X_,15,activation=tf.nn.relu)
+a2 = tf.layers.dense(a1,15,activation=tf.nn.relu)
 A = tf.layers.dense(a2,num_keys) # activation=None
 
 # Critic
-XA = tf.concat([X_,A],1)
+A_ = tf.placeholder(tf.float32,[None,num_keys])
+XA = tf.concat([X_,A_],1)
 fc1 = tf.layers.dense(XA,50,activation=tf.nn.relu)
 fc2 = tf.layers.dense(fc1,10,activation=tf.nn.relu)
 fc3 = tf.layers.dense(fc2,1)
@@ -93,8 +94,21 @@ Y = tf.placeholder(tf.float32,None)
 
 loss = tf.losses.mean_squared_error(Y,fc3)
 train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
-actorLoss = -tf.reduce_mean(fc3)
+
+actorLoss = -tf.reduce_mean(Y)*(tf.norm(A)/tf.norm(A))
 actorTrain = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(actorLoss)
+
+# Auxiliary network
+#a1_ = tf.layers.dense(X_,50,activation=tf.nn.relu)
+#a2_ = tf.layers.dense(a1_,15,activation=tf.nn.relu)
+#A_ = tf.layers.dense(a2_,num_keys)
+#fc1_ = tf.layers.dense(XA,50,activation=tf.nn.relu)
+#fc2_ = tf.layers.dense(fc1_,10,activation=tf.nn.relu)
+#fc3_ = tf.layers.dense(fc2_,1)
+
+# Copy ops
+#vars_cp = tf.trainable_variables()
+#copy_ops = [vars_cp[ix+len(vars_cp)//2].assign(var.value()) for ix, var in enumerate(vars_cp[0:len(vars_cp)//2])]
 
 env = gym.make(env_name)
 gamma = 0.99
@@ -105,6 +119,7 @@ with tf.Session() as sess:
 		saver.restore(sess,model_fn)
 	else:
 		sess.run(tf.global_variables_initializer())
+		#map(lambda x: sess.run(x), copy_ops)
 	set_rep_mem(env)
 	scores = deque(maxlen=100)
 	scores_ = []
@@ -114,7 +129,8 @@ with tf.Session() as sess:
 		d = False
 		s_r = 0.0
 		while not d:
-			actA, actQ = sess.run([A,fc3],feed_dict={X:[obs]})
+			actA = sess.run(A,feed_dict={X:[obs]})
+			actQ = sess.run(fc3,feed_dict={X:[obs],A_:actA})
 			actQ = np.transpose(actQ)
 			actA = np.transpose(actA)
 			a = actA[0] + random.gauss(0.0,0.1)
@@ -124,19 +140,22 @@ with tf.Session() as sess:
 			s_r += r
 			replace_mem(new_mem)
 			obs = new_obs
+			# Replay
+			q_sa, b_ob, b_act, b_r, b_new_ob, b_d = get_batch()
+			actA = sess.run(A,feed_dict={X:b_new_ob})
+			actQ = sess.run(fc3,feed_dict={X:b_new_ob,A_:actA})
+			y = np.zeros(batch_size)
+			for j in range(batch_size):
+				if b_d[j]:
+					y[j] = b_r[j]
+				else:
+					y[j] = b_r[j]+gamma*actQ[j]
+			actA = sess.run(A,feed_dict={X:b_ob})
+			sess.run(train,feed_dict={X:b_ob,A_:actA,Y:y})
+			sess.run(actorTrain,feed_dict={X:b_ob,Y:actQ})
+			#map(lambda x: sess.run(x), copy_ops)
 		scores.append(s_r)
 		scores_.append(s_r)
-		# Replay
-		q_sa, b_ob, b_act, b_r, b_new_ob, b_d = get_batch()
-		actQ = sess.run(fc3,feed_dict={X:b_new_ob})
-		y = np.zeros(batch_size)
-		for j in range(batch_size):
-			if b_d[j]:
-				y[j] = b_r[j]
-			else:
-				y[j] = b_r[j]+gamma*actQ[j]
-		sess.run(train,feed_dict={X:b_ob,Y:y})
-		sess.run(actorTrain,feed_dict={X:b_ob})
 		if t%1000 == 999:
 			saver.save(sess,model_fn)
 
