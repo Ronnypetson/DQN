@@ -7,17 +7,17 @@ from collections import deque
 
 env_name = 'Pong-ram-v0'
 state_dim = 128
-ob_frames = 3
+ob_frames = 2
 num_keys = 6
 learning_rate = 0.001
-replay_len = 10000
+replay_len = 2000
 oldest_mem = 0
-batch_size = 32
+batch_size = 16
 all_actions = np.identity(num_keys)
 default_action = all_actions[0]
 rep_all_actions = np.tile(all_actions,(batch_size,1))
 empty_obs = np.zeros((ob_frames,state_dim))
-model_fn = 'checkpoint/'+env_name+'/'+env_name+'.ckpt'
+model_fn = 'checkpoint/'+env_name+'_enc/'+env_name+'.ckpt'
 mem = replay_len*[{'q_sa':0.0,'obs':empty_obs,'act':default_action,'r':0.0,'new_obs':empty_obs,'d':False}]
 
 def Or(f):
@@ -78,13 +78,25 @@ Y = tf.placeholder(tf.float32,[None,1])
 
 X_ = tf.contrib.layers.flatten(X)
 act_ = tf.contrib.layers.flatten(act)
-fc1 = tf.concat([X_,act_],1)
-fc1 = tf.layers.dense(fc1,100,activation=tf.nn.relu)
-fc2 = tf.layers.dense(fc1,20,activation=tf.nn.relu)
-fc3 = tf.layers.dense(fc2,1)
+XA = tf.concat([X_,act_],1)
+
+# Encoder
+r1 = tf.layers.dense(X_,50,activation=tf.nn.relu)
+r2 = tf.layers.dense(r1,10,activation=tf.nn.relu)
+r3 = tf.layers.dense(r2,50,activation=tf.nn.relu)
+r4 = tf.layers.dense(r3,ob_frames*state_dim,activation=tf.nn.relu)
+enc_loss = tf.losses.mean_squared_error(r4,X_)
+enc_train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(enc_loss)
+
+# Q estimator
+with tf.variable_scope("Q"):
+	fc1 = tf.layers.dense(r2,30,activation=tf.nn.relu,name='fc1')
+	fc2 = tf.layers.dense(fc1,10,activation=tf.nn.relu,name='fc2')
+	fc3 = tf.layers.dense(fc2,1,name='fc3')
 
 loss = tf.losses.mean_squared_error(fc3,Y)
-train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
+Q_vars = tf.trainable_variables('Q')
+train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss,var_list=Q_vars)
 
 env = gym.make(env_name)
 gamma = 0.99
@@ -109,7 +121,7 @@ with tf.Session() as sess:
 			Q = np.transpose(Q)[0]
 			a = env.action_space.sample() if random.uniform(0,1) < e else np.argmax(Q)
 			#print(a)
-			new_obs,r,d = step(env,a,t%100==99)
+			new_obs,r,d = step(env,a,t%20==19)
 			new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
 			s_r += r
 			replace_mem(new_mem)
@@ -126,6 +138,7 @@ with tf.Session() as sess:
 					y[j] = b_r[j]+gamma*np.max(Q[j*(num_keys):(j+1)*num_keys])
 			y = np.reshape(y,(batch_size,1))
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
+			sess.run(enc_train,feed_dict={X:b_ob})
 		scores.append(s_r)
 		print(np.mean(scores))
 		scores_.append(s_r)
