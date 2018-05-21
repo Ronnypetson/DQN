@@ -10,9 +10,9 @@ state_dim = 128
 ob_frames = 2
 num_keys = 6
 learning_rate = 0.001
-replay_len = 2000
+replay_len = 10000
 oldest_mem = 0
-batch_size = 16
+batch_size = 32
 all_actions = np.identity(num_keys)
 default_action = all_actions[0]
 rep_all_actions = np.tile(all_actions,(batch_size,1))
@@ -81,12 +81,11 @@ act_ = tf.contrib.layers.flatten(act)
 XA = tf.concat([X_,act_],1)
 
 # Encoder
-r1 = tf.layers.dense(X_,50,activation=tf.nn.relu)
-r2 = tf.layers.dense(r1,10,activation=tf.nn.relu)
-r3 = tf.layers.dense(r2,50,activation=tf.nn.relu)
-r4 = tf.layers.dense(r3,ob_frames*state_dim,activation=tf.nn.relu)
-enc_loss = tf.losses.mean_squared_error(r4,X_)
-enc_train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(enc_loss)
+with tf.variable_scope("enc"):
+	r1 = tf.layers.dense(X_,50,activation=tf.nn.relu,name='r1')
+	r2 = tf.layers.dense(r1,10,activation=tf.nn.relu,name='r2')
+	r3 = tf.layers.dense(r2,50,activation=tf.nn.relu,name='r3')
+	r4 = tf.layers.dense(r3,ob_frames*state_dim,activation=tf.nn.relu,name='r4')
 
 # Q estimator
 with tf.variable_scope("Q"):
@@ -94,9 +93,14 @@ with tf.variable_scope("Q"):
 	fc2 = tf.layers.dense(fc1,10,activation=tf.nn.relu,name='fc2')
 	fc3 = tf.layers.dense(fc2,1,name='fc3')
 
-loss = tf.losses.mean_squared_error(fc3,Y)
 Q_vars = tf.trainable_variables('Q')
-train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss,var_list=Q_vars)
+enc_vars = tf.trainable_variables('enc')
+
+loss = tf.losses.mean_squared_error(fc3,Y)
+train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss) # ,var_list=Q_vars
+
+enc_loss = tf.losses.mean_squared_error(r4,X_)
+enc_train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(enc_loss) # ,var_list=enc_vars
 
 env = gym.make(env_name)
 gamma = 0.99
@@ -120,7 +124,6 @@ with tf.Session() as sess:
 			Q = sess.run(fc3,feed_dict={X:num_keys*[obs],act:all_actions})
 			Q = np.transpose(Q)[0]
 			a = env.action_space.sample() if random.uniform(0,1) < e else np.argmax(Q)
-			#print(a)
 			new_obs,r,d = step(env,a,t%20==19)
 			new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
 			s_r += r
@@ -140,6 +143,7 @@ with tf.Session() as sess:
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
 			sess.run(enc_train,feed_dict={X:b_ob})
 		scores.append(s_r)
+		e = 1.0/(1+np.exp(np.mean(scores)+19.0))
 		print(np.mean(scores))
 		scores_.append(s_r)
 		if t%500 == 499:
