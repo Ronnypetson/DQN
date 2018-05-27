@@ -70,7 +70,7 @@ def step(env,a,render=False):
 		obs[i],r[i],d[i],_ = env.step(a)
 	r = np.sum(r)
 	d = Or(d)
-	return obs,r,d
+	return obs/255.0,r,d
 
 X = tf.placeholder(tf.float32,[None,ob_frames,state_dim])
 act = tf.placeholder(tf.float32,[None,num_keys])
@@ -78,10 +78,12 @@ Y = tf.placeholder(tf.float32,[None,1])
 
 X_ = tf.contrib.layers.flatten(X)
 act_ = tf.contrib.layers.flatten(act)
-fc1 = tf.concat([X_,act_],1)
-fc1 = tf.layers.dense(fc1,100,activation=tf.nn.relu)
-fc2 = tf.layers.dense(fc1,20,activation=tf.nn.relu)
-fc3 = tf.layers.dense(fc2,1)
+XA_ = tf.concat([X_,act_],1)
+XA = tf.reshape(XA_,[-1,ob_frames*state_dim+num_keys,1])
+fc1 = tf.layers.conv1d(XA,8,5,strides=2,padding='same',activation=tf.nn.relu)
+fc2 = tf.layers.conv1d(fc1,8,5,strides=2,padding='same',activation=tf.nn.relu)
+fc2_ = tf.layers.dense(tf.contrib.layers.flatten(fc2),20,activation=tf.nn.relu)
+fc3 = tf.layers.dense(fc2_,1)
 
 loss = tf.losses.mean_squared_error(fc3,Y)
 train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
@@ -101,7 +103,7 @@ with tf.Session() as sess:
 	scores_ = []
 	for t in range(5000):
 		obs = np.expand_dims(env.reset(),axis=0)
-		obs = ob_frames*obs.tolist()
+		obs = ob_frames*(obs/255.0).tolist()
 		d = False
 		s_r = 0.0
 		while not d:
@@ -123,11 +125,13 @@ with tf.Session() as sess:
 				if b_d[j]:
 					y[j] = b_r[j]
 				else:
-					y[j] = b_r[j]+gamma*np.max(Q[j*(num_keys):(j+1)*num_keys])
+					y[j] = b_r[j]+gamma*np.max(Q[j*num_keys:(j+1)*num_keys])
 			y = np.reshape(y,(batch_size,1))
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
+		mean_sc = np.mean(scores)
+		e = min(0.1,1.0/(1.0+np.exp(mean_sc+20.0)))
 		scores.append(s_r)
-		print(np.mean(scores))
+		print(mean_sc)
 		scores_.append(s_r)
 		if t%500 == 499:
 			saver.save(sess,model_fn)

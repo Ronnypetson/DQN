@@ -143,7 +143,8 @@ with tf.Session() as sess:
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
 			sess.run(enc_train,feed_dict={X:b_ob})
 		scores.append(s_r)
-		e = 1.0/(1+np.exp(np.mean(scores)+19.0))
+		mean_sc = np.mean(scores)
+		e = max(0.05,min(0.95,(-mean_sc-18.3)/4.6+0.5)) #1.0/(1+np.exp(np.mean(scores)+17.0))
 		print(np.mean(scores))
 		scores_.append(s_r)
 		if t%500 == 499:
