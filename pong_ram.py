@@ -10,9 +10,9 @@ state_dim = 128
 ob_frames = 3
 num_keys = 6
 learning_rate = 0.001
-replay_len = 10000
+replay_len = 100000
 oldest_mem = 0
-batch_size = 32
+batch_size = 64
 all_actions = np.identity(num_keys)
 default_action = all_actions[0]
 rep_all_actions = np.tile(all_actions,(batch_size,1))
@@ -80,28 +80,40 @@ X_ = tf.contrib.layers.flatten(X)
 act_ = tf.contrib.layers.flatten(act)
 XA_ = tf.concat([X_,act_],1)
 XA = tf.reshape(XA_,[-1,ob_frames*state_dim+num_keys,1])
-fc1 = tf.layers.conv1d(XA,8,5,strides=2,padding='same',activation=tf.nn.relu)
-fc2 = tf.layers.conv1d(fc1,8,5,strides=2,padding='same',activation=tf.nn.relu)
-fc2_ = tf.layers.dense(tf.contrib.layers.flatten(fc2),20,activation=tf.nn.relu)
+fc1 = tf.layers.conv1d(XA,16,5,strides=2,padding='same',activation=tf.nn.relu)
+fc2 = tf.layers.conv1d(fc1,32,5,strides=2,padding='same',activation=tf.nn.relu)
+fc2_ = tf.layers.dense(tf.contrib.layers.flatten(fc2),60,activation=tf.nn.relu)
 fc3 = tf.layers.dense(fc2_,1)
 
 loss = tf.losses.mean_squared_error(fc3,Y)
 train = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss)
 
+def set_rep_mem(env,sess):
+	obs = np.expand_dims(env.reset(),axis=0)
+	obs = ob_frames*(obs/255.0).tolist()
+	for i in range(replay_len):
+		Q = sess.run(fc3,feed_dict={X:num_keys*[obs],act:all_actions})
+		Q = np.transpose(Q)[0]
+		a = np.argmax(Q)
+		new_obs,r,d = step(env,a)
+		new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
+		replace_mem(new_mem)
+		obs = new_obs
+
 env = gym.make(env_name)
 gamma = 0.99
 e = 0.1
-
+# 6sBG0r
 with tf.Session() as sess:
 	saver = tf.train.Saver()
 	if os.path.isfile(model_fn+'.meta'):
 		saver.restore(sess,model_fn)
 	else:
 		sess.run(tf.global_variables_initializer())
-	set_rep_mem(env)
+	set_rep_mem(env,sess)
 	scores = deque(maxlen=100)
 	scores_ = []
-	for t in range(5000):
+	for t in range(300):
 		obs = np.expand_dims(env.reset(),axis=0)
 		obs = ob_frames*(obs/255.0).tolist()
 		d = False
@@ -129,10 +141,10 @@ with tf.Session() as sess:
 			y = np.reshape(y,(batch_size,1))
 			sess.run(train,feed_dict={X:b_ob,act:[all_actions[a] for a in b_act],Y:y})
 		mean_sc = np.mean(scores)
-		e = min(0.1,1.0/(1.0+np.exp(mean_sc+20.0)))
+		e = 1.0/(1.0+np.exp(mean_sc+20.0))
 		scores.append(s_r)
 		print(mean_sc)
 		scores_.append(s_r)
-		if t%500 == 499:
+		if t%100 == 99:
 			saver.save(sess,model_fn)
 
