@@ -59,7 +59,7 @@ def set_rep_mem(env):
 			obs = np.expand_dims(env.reset(),axis=0)
 			obs = ob_frames*obs.tolist()
 		else:
-		  obs = new_obs
+			obs = new_obs
 
 def step(env,a,render=False):
 	obs = np.zeros((ob_frames,state_dim))
@@ -80,6 +80,7 @@ X_ = tf.contrib.layers.flatten(X)
 act_ = tf.contrib.layers.flatten(act)
 XA_ = tf.concat([X_,act_],1)
 XA = tf.reshape(XA_,[-1,ob_frames*state_dim+num_keys,1])
+
 fc1 = tf.layers.conv1d(XA,16,5,strides=2,padding='same',activation=tf.nn.relu)
 fc2 = tf.layers.conv1d(fc1,32,5,strides=2,padding='same',activation=tf.nn.relu)
 fc2_ = tf.layers.dense(tf.contrib.layers.flatten(fc2),60,activation=tf.nn.relu)
@@ -102,8 +103,8 @@ def set_rep_mem(env,sess):
 
 env = gym.make(env_name)
 gamma = 0.99
-e = 0.1
-# 6sBG0r
+e = 0.05
+
 with tf.Session() as sess:
 	saver = tf.train.Saver()
 	if os.path.isfile(model_fn+'.meta'):
@@ -112,8 +113,7 @@ with tf.Session() as sess:
 		sess.run(tf.global_variables_initializer())
 	set_rep_mem(env,sess)
 	scores = deque(maxlen=100)
-	scores_ = []
-	for t in range(300):
+	for t in range(1000):
 		obs = np.expand_dims(env.reset(),axis=0)
 		obs = ob_frames*(obs/255.0).tolist()
 		d = False
@@ -122,12 +122,12 @@ with tf.Session() as sess:
 			Q = sess.run(fc3,feed_dict={X:num_keys*[obs],act:all_actions})
 			Q = np.transpose(Q)[0]
 			a = env.action_space.sample() if random.uniform(0,1) < e else np.argmax(Q)
-			#print(a)
-			new_obs,r,d = step(env,a,t%100==99)
+			new_obs,r,d = step(env,a,t%20==19)
 			new_mem = {'q_sa': Q[a],'obs':obs,'act':a,'r':r,'new_obs':new_obs,'d':d}
 			s_r += r
 			replace_mem(new_mem)
 			obs = new_obs
+		for i in range(10):
 			# Replay
 			q_sa, b_ob, b_act, b_r, b_new_ob, b_d = get_batch()
 			rep_obs = np.repeat(b_new_ob,num_keys,axis=0)	#[np.tile(ob,(num_keys,1)) for ob in b_new_ob]
@@ -144,7 +144,6 @@ with tf.Session() as sess:
 		e = 1.0/(1.0+np.exp(mean_sc+20.0))
 		scores.append(s_r)
 		print(mean_sc)
-		scores_.append(s_r)
 		if t%100 == 99:
 			saver.save(sess,model_fn)
 
